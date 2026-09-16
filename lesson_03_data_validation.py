@@ -26,31 +26,32 @@ received_user = {
     }
 }
 
-print("==============Validations================")
+if __name__ == "__main__":
+    print("==============Validations================")
 
-# try-catch (except)
+    # try-catch (except)
 
-try:
-    validated_user = UserValidator.model_validate(received_user, strict=True)
-    print(validated_user.name)
-    print(validated_user)
-except ValidationError as e:
-    print(e)
-    print(e.errors())
-finally:
-    print("am terminat cu validarea")
+    try:
+        validated_user = UserValidator.model_validate(received_user, strict=True)
+        print(validated_user.name)
+        print(validated_user)
+    except ValidationError as e:
+        print(e)
+        print(e.errors())
+    finally:
+        print("am terminat cu validarea")
 
-varx = None
-print(varx)
+    varx = None
+    print(varx)
 
-def function2():
-    v = 10
-    v += 20
+    def function2():
+        v = 10
+        v += 20
 
-    # return-ul este implicit None
-    # return None
+        # return-ul este implicit None
+        # return None
 
-print(function2())
+    print(function2())
 
 
 
