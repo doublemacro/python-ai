@@ -76,6 +76,7 @@ def main():
                     "content": output
                 })
 
+            # without this response, the agent can't reply to the user with the proper tool output data.
             response = complete(client, messages, tools)
 
         print("agent> ", response)
