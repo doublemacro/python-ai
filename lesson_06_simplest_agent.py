@@ -1,8 +1,61 @@
 import os
 import subprocess
+import json
 from pathlib import Path
+
 from dotenv import load_dotenv
 from openai import OpenAI
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
+
+
+PROJECT_ROOT = Path(__file__).resolve().parent
+
+
+class FileNameValidator(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(description="Name of the text file in this project.")
+
+
+class FileSummaryValidator(BaseModel):
+    """This validator can validate the output of an agent, the JSON returned by the summary agent."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(description="The generated title for the file")
+    summary: str = Field(description="The summary for that file.")
+
+
+# starts a new agent and summarizes a file
+def summarize_file(client: OpenAI, args: dict) -> str:
+    try:
+        req = FileNameValidator.model_validate(args)
+        path = (PROJECT_ROOT / req.name).resolve()
+        path.relative_to(PROJECT_ROOT)
+        if not path.is_file():
+            return f"error: {req.name!r} is not a file in this project"
+        text = path.read_text(encoding="utf-8")
+
+        # starts our agent.
+        response = client.chat.completions.create(
+            model=os.getenv("OPEN_ROUTER_MODEL_NAME"),
+            messages=[
+                {"role": "system", "content": "Return ONLY JSON, that contains a title and a short summary. Summarise the file you received, and put it in the JSON response."},
+                {"role": "user", "content": f"Please summarize this file for me: {text}"},
+            ],
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "file_summary",
+                    "schema": FileSummaryValidator.model_json_schema(),
+                    "strict": True,
+                },
+            },
+        ).choices[0].message
+        validated_model_json = FileSummaryValidator.model_validate_json(response.content)
+        return validated_model_json.model_dump_json()
+    except (OSError, ValidationError, ValueError) as error:
+        return f"error: {error}"
 
 
 def run_tests() -> str:
@@ -45,6 +98,14 @@ def main():
                 "name": "run_tests",
                 "description": "Run uv run pytest."
             }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "summarize_file",
+                "description": "Reads and summarizes a text file in the current project, as JSON output.",
+                "parameters": FileNameValidator.model_json_schema()
+            }
         }
     ]
 
@@ -52,7 +113,7 @@ def main():
     # system prompt.
     messages.append({
         "role": "system",
-        "content": "You are a helpful assistant. If the user asks to run some tests, please only run the run_tests tool that you have at your disposal."
+        "content": "You are a helpful assistant. If the user asks to run some tests, please only run the run_tests tool that you have at your disposal. If instead, the user asks to summarize a file, use the provided summarize_file tool that you have."
     })
     while True:
         inp = input("you> ")
@@ -65,19 +126,28 @@ def main():
 
         # ii cerem agentului sa ne raspunda la un mesaj.
         response = complete(client, messages, tools)
+        messages.append(response.model_dump(exclude_none=True))
 
         if response.tool_calls:
             for tool_call in response.tool_calls:
-                output = run_tests()
+                tool_name = tool_call.function.name
+                args = json.loads(tool_call.function.arguments)
+                if tool_name == "summarize_file":
+                    output = summarize_file(client, args)
+                elif tool_name == "run_tests":
+                    output = run_tests()
+                else:
+                    output = f"error: unknown tool {tool_name}"
 
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tool_call.id,
-                    "content": output
+                    "content": output,
                 })
 
             # without this response, the agent can't reply to the user with the proper tool output data.
             response = complete(client, messages, tools)
+            messages.append(response.model_dump(exclude_none=True))
 
         print("agent> ", response)
         print(f"Message count: {len(messages)}")
@@ -86,3 +156,11 @@ def main():
 if __name__ == "__main__":
     main()
     # print(run_tests())
+    # load_dotenv()
+    #
+    # client = OpenAI(
+    #     base_url="https://openrouter.ai/api/v1",
+    #     api_key=os.getenv("OPEN_ROUTER_API_KEY")
+    # )
+
+    # print(summarize_file(client, args={"name": "lesson_06_simplest_agent.py"}))
