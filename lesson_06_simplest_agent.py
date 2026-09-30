@@ -154,6 +154,14 @@ def main():
                 "description": "Reads and summarizes a text file in the current project, as JSON output.",
                 "parameters": FileNameValidator.model_json_schema()
             }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "analyze_document",
+                "description": "Counts words and requested word matches in a text file in the current project, as JSON output.",
+                "parameters": DocAnalysisRequest.model_json_schema()
+            }
         }
     ]
 
@@ -161,7 +169,7 @@ def main():
     # system prompt.
     messages.append({
         "role": "system",
-        "content": "You are a helpful assistant. If the user asks to run some tests, please only run the run_tests tool that you have at your disposal. If instead, the user asks to summarize a file, use the provided summarize_file tool that you have."
+        "content": "You are a helpful assistant. If the user asks to run some tests, please only run the run_tests tool that you have at your disposal. If instead, the user asks to summarize a file, use the provided summarize_file tool that you have. If the user asks to analyze a file or count words in a file, use the provided analyze_document tool that you have."
     })
     while True:
         inp = input("you> ")
@@ -184,6 +192,8 @@ def main():
                     output = summarize_file(client, args)
                 elif tool_name == "run_tests":
                     output = run_tests()
+                elif tool_name == "analyze_document":
+                    output = analyze_document(args)
                 else:
                     output = f"error: unknown tool {tool_name}"
 
