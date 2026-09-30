@@ -8,6 +8,7 @@ from openai import OpenAI
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 
+# variabila statica
 PROJECT_ROOT = Path(__file__).resolve().parent
 
 
@@ -24,6 +25,53 @@ class FileSummaryValidator(BaseModel):
 
     title: str = Field(description="The generated title for the file")
     summary: str = Field(description="The summary for that file.")
+
+
+class DocAnalysisRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    file_name: str = Field(description="Name of the text file in this project.")
+    words: list[str] = Field(description="Words to count in the given file.")
+
+
+class DocAnalysisReport(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    file_name: str
+    word_count: int
+    matches: dict[str, int]
+
+
+def analyze_document(args: dict):
+    try:
+        request = DocAnalysisRequest.model_validate(args)
+        file_name = request.file_name
+        words = request.words
+
+        # open a file. find how many times a word occurs in the file.
+        p = (PROJECT_ROOT / file_name).resolve()
+        p.relative_to(PROJECT_ROOT)
+
+        if not p.is_file():
+            return f"error: {file_name} is not a file!"
+
+        text = p.read_text(encoding="utf-8")
+        split_document = text.lower().replace(".", " ").split()
+        matches = {}
+
+        for word in words:
+            count = split_document.count(word)
+            matches[word] = count
+
+        report = DocAnalysisReport(
+            file_name=file_name,
+            matches=matches,
+            word_count=len(split_document)
+        )
+
+        return report.model_dump_json()
+    except (ValidationError, ValueError, OSError) as error:
+        return f"error: {error}"
 
 
 # starts a new agent and summarizes a file

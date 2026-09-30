@@ -5,11 +5,11 @@ def find_exact_word_in_file(file_path, target_word):
     pattern = rf"\b{target_word}\b"
 
     with open(file_path, 'r', encoding='utf-8') as file:
-        for line_number, line in enumerate(file, 1):
+        for line in file:
             # re.search checks if the pattern exists anywhere in the line
             line = line.lower()
             if re.search(pattern, line):
-                print(f"Line {line_number}: {line.strip()}")
+                print(f"{line.strip()}")
 
 
 # Example Usage
