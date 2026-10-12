@@ -10,9 +10,13 @@ from dotenv import load_dotenv
 from openai import OpenAI
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sentence_transformers import SentenceTransformer
+from rank_bm25 import BM25Okapi
+import re
 
 
 # incarcam fisierul -> chunk-uri (spargem bucati) -> embeddings -> incarcam in baza de date vectoriala -> semantic search pe DB vectorial -> returnam rezultatele.
+# pentru hybrid search: calculam pentru toate chunk-urile care ne intereseaza, un scor. la fel si pentru intrebare. verificam intrebarea cu fiecare <-> chunk
+# extragem un scor, si o integram cu scorurile de la semantic search.
 
 MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 COLLECTION_NAME = "pdf_chunks"
@@ -20,12 +24,17 @@ FILE_PATH = "StarMaker.pdf"
 
 CHUNK_SIZE = 800
 CHUNK_OVERLAP = 120
+HYBRID_SEARCH_RESULT_COUNT = 8
 
 
 class SearchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     question: str = Field(description="Question about the contents of StarMaker.pdf.")
+
+
+def tokenize(text: str) -> list[str]:
+    return re.findall(r"\b\w+\b", text.lower())
 
 
 def chunk_text(text: str) -> list[str]:
@@ -90,6 +99,8 @@ def index_file(collection, model, file_path):
         metadatas=metadatas,
     )
 
+    return documents
+
 
 def complete(client: OpenAI, messages: list[dict], tools: list[dict]):
     return client.chat.completions.create(
@@ -98,6 +109,29 @@ def complete(client: OpenAI, messages: list[dict], tools: list[dict]):
         tools=tools,
         tool_choice="auto",
     ).choices[0].message
+
+
+def hybrid_search(collection, model, bm25, documents, args):
+    request = SearchRequest.model_validate(json.loads(args))
+    question = request.question
+    question_vector = model.encode(question, normalize_embeddings=True).tolist()
+
+    # o sa ne folosim de 2 seturi de rezultate, si le combinam pentru un scor hibrid.
+    semantic_results = collection.query(
+            query_embeddings=[question_vector],
+            n_results=HYBRID_SEARCH_RESULT_COUNT,
+            include=["documents", "metadatas", "distances"],
+        )
+
+    hybrid_scores = {}
+    ids = semantic_results["ids"]
+
+    # 1 -> 1, 2 -> 0.5, 3 -> 0.33, 4 -> 0.25
+
+    for rank in range(len(ids)):
+        id_from_ids = ids[rank]
+        chunk_index = int(id_from_ids)
+        # to be continued.
 
 
 def answer_with_context(client: OpenAI, collection, model, args: str) -> str:
@@ -147,7 +181,16 @@ def main():
         name=COLLECTION_NAME,
         metadata={"hnsw:space": "cosine"},
     )
-    index_file(collection, model, Path(FILE_PATH))
+    documents = index_file(collection, model, Path(FILE_PATH))
+
+    # alt pas de indexare, unde calculam vectorii pentru BM25
+    # intai, tokenizam chunk-urile
+    tokenized_documents = []
+    for doc in documents:
+        tokens = tokenize(doc)
+        tokenized_documents.append(tokens)
+
+    bm25 = BM25Okapi(tokenized_documents)
 
     tools = [
         {
@@ -178,6 +221,7 @@ def main():
         if response.tool_calls:
             for tool_call in response.tool_calls:
                 if tool_call.function.name == "search_starmaker":
+                    results = hybrid_search(collection, model, bm25, documents, tool_call.function.arguments)
                     output = answer_with_context(client, collection, model, tool_call.function.arguments)
                 else:
                     output = f"error: unknown tool {tool_call.function.name}"
