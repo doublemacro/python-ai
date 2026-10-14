@@ -137,12 +137,15 @@ def hybrid_search(collection, model, bm25, documents, metadatas, args):
 
     hybrid_scores = {}
     semantic_documents = semantic_results["documents"][0]
+    semantic_docs_metadatas = semantic_results["metadatas"][0]
 
     # Rank 0 receives 1 point, rank 1 receives 1/2 point, and so on.
     rank = 0
-    for document in semantic_documents:
+
+    for i in range(len(semantic_docs_metadatas)):
+        metadata = semantic_docs_metadatas[i]
         # Find this semantic result's position in the original documents list.
-        chunk_index = documents.index(document)
+        chunk_index = metadatas.index(metadata)
         hybrid_scores[chunk_index] = 1 / (rank + 1)
         rank += 1
 
