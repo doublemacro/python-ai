@@ -118,20 +118,64 @@ def hybrid_search(collection, model, bm25, documents, args):
 
     # o sa ne folosim de 2 seturi de rezultate, si le combinam pentru un scor hibrid.
     semantic_results = collection.query(
-            query_embeddings=[question_vector],
-            n_results=HYBRID_SEARCH_RESULT_COUNT,
-            include=["documents", "metadatas", "distances"],
-        )
+        query_embeddings=[question_vector],
+        n_results=HYBRID_SEARCH_RESULT_COUNT,
+        include=["documents", "metadatas", "distances"],
+    )
 
     hybrid_scores = {}
-    ids = semantic_results["ids"]
+    semantic_documents = semantic_results["documents"][0]
 
-    # 1 -> 1, 2 -> 0.5, 3 -> 0.33, 4 -> 0.25
+    # Rank 0 receives 1 point, rank 1 receives 1/2 point, and so on.
+    rank = 0
+    for document in semantic_documents:
+        # Find this semantic result's position in the original documents list.
+        chunk_index = documents.index(document)
+        hybrid_scores[chunk_index] = 1 / (rank + 1)
+        rank += 1
 
-    for rank in range(len(ids)):
-        id_from_ids = ids[rank]
-        chunk_index = int(id_from_ids)
-        # to be continued.
+    bm25_scores = bm25.get_scores(tokenize(question))
+    bm25_results = []
+    chunk_index = 0
+    for score in bm25_scores:
+        bm25_results.append((score, chunk_index))
+        chunk_index += 1
+    bm25_results.sort(reverse=True)
+
+    rank = 0
+    for _, chunk_index in bm25_results[:HYBRID_SEARCH_RESULT_COUNT]:
+        if chunk_index not in hybrid_scores:
+            hybrid_scores[chunk_index] = 0
+        hybrid_scores[chunk_index] += 1 / (rank + 1)
+        rank += 1
+
+    combined_results = []
+    for chunk_index, score in hybrid_scores.items():
+        combined_results.append((score, chunk_index))
+    combined_results.sort(reverse=True)
+
+    results = []
+    for _, chunk_index in combined_results[:HYBRID_SEARCH_RESULT_COUNT]:
+        results.append(documents[chunk_index])
+    return results
+
+
+def answer_with_hybrid_context(client: OpenAI, args: str, documents: list[str]) -> str:
+    try:
+        request = SearchRequest.model_validate(json.loads(args))
+        context = "\n\n".join(documents)
+        return client.chat.completions.create(
+            model=os.getenv("OPEN_ROUTER_MODEL_NAME"),
+            messages=[
+                {
+                    "role": "system",
+                    "content": "Answer only from the supplied context. If it does not answer the question, say so.",
+                },
+                {"role": "user", "content": f"Question: {request.question}\n\nContext:\n{context}"},
+            ],
+        ).choices[0].message.content
+    except (json.JSONDecodeError, ValidationError) as error:
+        return f"error: {error}"
 
 
 def answer_with_context(client: OpenAI, collection, model, args: str) -> str:
@@ -222,7 +266,7 @@ def main():
             for tool_call in response.tool_calls:
                 if tool_call.function.name == "search_starmaker":
                     results = hybrid_search(collection, model, bm25, documents, tool_call.function.arguments)
-                    output = answer_with_context(client, collection, model, tool_call.function.arguments)
+                    output = answer_with_hybrid_context(client, tool_call.function.arguments, results)
                 else:
                     output = f"error: unknown tool {tool_call.function.name}"
                 messages.append({"role": "tool", "tool_call_id": tool_call.id, "content": output})
