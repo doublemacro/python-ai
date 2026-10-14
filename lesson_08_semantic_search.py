@@ -21,6 +21,7 @@ import re
 MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 COLLECTION_NAME = "pdf_chunks"
 FILE_PATH = "StarMaker.pdf"
+INVOICES_FILE_PATH = "invoices.pdf"
 
 CHUNK_SIZE = 800
 CHUNK_OVERLAP = 120
@@ -99,7 +100,7 @@ def index_file(collection, model, file_path):
         metadatas=metadatas,
     )
 
-    return documents
+    return documents, metadatas
 
 
 def complete(client: OpenAI, messages: list[dict], tools: list[dict]):
@@ -111,7 +112,7 @@ def complete(client: OpenAI, messages: list[dict], tools: list[dict]):
     ).choices[0].message
 
 
-def hybrid_search(collection, model, bm25, documents, args):
+def hybrid_search(collection, model, bm25, documents, metadatas, args):
     request = SearchRequest.model_validate(json.loads(args))
     question = request.question
     question_vector = model.encode(question, normalize_embeddings=True).tolist()
@@ -156,7 +157,9 @@ def hybrid_search(collection, model, bm25, documents, args):
 
     results = []
     for _, chunk_index in combined_results[:HYBRID_SEARCH_RESULT_COUNT]:
-        results.append(documents[chunk_index])
+        results.append(
+            f"{documents[chunk_index]}\nSource: {metadatas[chunk_index]['source']}, page {metadatas[chunk_index]['page']}"
+        )
     return results
 
 
@@ -225,7 +228,12 @@ def main():
         name=COLLECTION_NAME,
         metadata={"hnsw:space": "cosine"},
     )
-    documents = index_file(collection, model, Path(FILE_PATH))
+    documents = []
+    metadatas = []
+    for file_path in [FILE_PATH, INVOICES_FILE_PATH]:
+        file_documents, file_metadatas = index_file(collection, model, Path(file_path))
+        documents.extend(file_documents)
+        metadatas.extend(file_metadatas)
 
     # alt pas de indexare, unde calculam vectorii pentru BM25
     # intai, tokenizam chunk-urile
@@ -241,7 +249,7 @@ def main():
             "type": "function",
             "function": {
                 "name": "search_starmaker",
-                "description": "Searches StarMaker.pdf and answers from it. Use only when the user asks about StarMaker.pdf or its contents.",
+                "description": "Searches StarMaker.pdf and invoices.pdf and answers from them. Use only when the user asks about their contents.",
                 "parameters": SearchRequest.model_json_schema(),
             },
         }
@@ -249,7 +257,7 @@ def main():
     messages = [
         {
             "role": "system",
-            "content": "You are a helpful assistant. Use search_starmaker only for questions about StarMaker.pdf or its contents. Use it before answering those questions. Answer other questions normally.",
+            "content": "You are a helpful assistant. Use search_starmaker only for questions about StarMaker.pdf, invoices.pdf, or their contents. Use it before answering those questions. Answer other questions normally.",
         }
     ]
 
@@ -265,7 +273,7 @@ def main():
         if response.tool_calls:
             for tool_call in response.tool_calls:
                 if tool_call.function.name == "search_starmaker":
-                    results = hybrid_search(collection, model, bm25, documents, tool_call.function.arguments)
+                    results = hybrid_search(collection, model, bm25, documents, metadatas, tool_call.function.arguments)
                     output = answer_with_hybrid_context(client, tool_call.function.arguments, results)
                 else:
                     output = f"error: unknown tool {tool_call.function.name}"
