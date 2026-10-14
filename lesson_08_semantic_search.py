@@ -13,6 +13,16 @@ from sentence_transformers import SentenceTransformer
 from rank_bm25 import BM25Okapi
 import re
 
+# def return_result():
+#     result = 10
+#     date_calculated = "2026"
+#
+#     return result, date_calculated
+#
+# res1, date1 = return_result()
+
+# list1 = [30, 40, 1, -5, 0]
+# list1.sort(reverse=True)
 
 # incarcam fisierul -> chunk-uri (spargem bucati) -> embeddings -> incarcam in baza de date vectoriala -> semantic search pe DB vectorial -> returnam rezultatele.
 # pentru hybrid search: calculam pentru toate chunk-urile care ne intereseaza, un scor. la fel si pentru intrebare. verificam intrebarea cu fiecare <-> chunk
@@ -118,6 +128,7 @@ def hybrid_search(collection, model, bm25, documents, metadatas, args):
     question_vector = model.encode(question, normalize_embeddings=True).tolist()
 
     # o sa ne folosim de 2 seturi de rezultate, si le combinam pentru un scor hibrid.
+    # intai facem cautare semantica.
     semantic_results = collection.query(
         query_embeddings=[question_vector],
         n_results=HYBRID_SEARCH_RESULT_COUNT,
@@ -141,6 +152,7 @@ def hybrid_search(collection, model, bm25, documents, metadatas, args):
     for score in bm25_scores:
         bm25_results.append((score, chunk_index))
         chunk_index += 1
+    # sortam invers toate rezultatele bm25. sortarea asta pune pe primele locuri chunk-urile cu cel mai ridicat scor.
     bm25_results.sort(reverse=True)
 
     rank = 0
