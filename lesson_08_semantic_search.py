@@ -45,6 +45,7 @@ class SearchRequest(BaseModel):
 
 
 def tokenize(text: str) -> list[str]:
+    # ia textul si il sparge in cuvinte.
     return re.findall(r"\b\w+\b", text.lower())
 
 
